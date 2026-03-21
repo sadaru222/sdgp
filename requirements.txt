@@ -7,3 +7,5 @@ pypdf
 google-genai
 motor
 dnspython
+pydantic-settings
+certifi

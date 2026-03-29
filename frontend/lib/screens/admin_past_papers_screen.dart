@@ -1,10 +1,99 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:frontend/services/admin_service.dart';
+import 'package:frontend/screens/admin_dashboard_screen.dart';
+import 'package:frontend/screens/admin_users_screen.dart';
+import 'package:frontend/screens/admin_notes_screen.dart';
+import 'package:frontend/screens/admin_mcq_upload_screen.dart'; // Ensure correct import for upload screen
 
-class AdminPastPapersScreen extends StatelessWidget {
+class AdminPastPapersScreen extends StatefulWidget {
   const AdminPastPapersScreen({super.key});
 
   @override
+  State<AdminPastPapersScreen> createState() => _AdminPastPapersScreenState();
+}
+
+class _AdminPastPapersScreenState extends State<AdminPastPapersScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  
+  bool _isLoading = true;
+  List<dynamic> _allPapers = [];
+  String _searchQuery = '';
+  String _selectedFilter = 'All'; // 'All' or 'Grade'
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchPapers();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchPapers() async {
+    setState(() => _isLoading = true);
+    final fetched = await AdminService().getAllPapers();
+    if (mounted) {
+      setState(() {
+        _allPapers = fetched;
+        _isLoading = false;
+      });
+    }
+  }
+
+  List<dynamic> get _filteredPapers {
+    List<dynamic> filtered = List.from(_allPapers);
+
+    // Filter by search
+    if (_searchQuery.isNotEmpty) {
+      filtered = filtered.where((paper) {
+        final title = (paper['title'] ?? '').toString().toLowerCase();
+        return title.contains(_searchQuery.toLowerCase());
+      }).toList();
+    }
+
+    // Sort by Grade if selected
+    if (_selectedFilter == 'Grade') {
+      filtered.sort((a, b) {
+        final gA = a['grade']?.toString() ?? '';
+        final gB = b['grade']?.toString() ?? '';
+        return gB.compareTo(gA); // descending
+      });
+    }
+
+    return filtered;
+  }
+
+  String _formatDate(String? isoDate) {
+    if (isoDate == null || isoDate.isEmpty) return 'Unknown date';
+    try {
+      final dt = DateTime.parse(isoDate);
+      return DateFormat('MMM d, yyyy').format(dt);
+    } catch (_) {
+      return 'Unknown date';
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    int totalPapers = _allPapers.length;
+    
+    // Count recently added papers (e.g. within last 7 days)
+    final now = DateTime.now();
+    int recentPapers = _allPapers.where((p) {
+      final isoDate = p['created_at'];
+      if (isoDate == null) return false;
+      try {
+        final dt = DateTime.parse(isoDate);
+        return now.difference(dt).inDays <= 7;
+      } catch (_) {
+        return false;
+      }
+    }).length;
+
     return Scaffold(
       backgroundColor: const Color(0xFF0F1123),
       body: Container(
@@ -82,12 +171,15 @@ class AdminPastPapersScreen extends StatelessWidget {
                             borderRadius: BorderRadius.circular(16),
                             border: Border.all(color: Colors.white12),
                           ),
-                          child: const TextField(
-                            style: TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
+                          child: TextField(
+                            controller: _searchController,
+                            onChanged: (val) => setState(() => _searchQuery = val),
+                            style: const TextStyle(color: Colors.white),
+                            decoration: const InputDecoration(
                               hintText: 'Search papers...',
-                              hintStyle: TextStyle(color: Colors.white54, fontSize: 14),
+                              hintStyle: TextStyle(color: Colors.white54, fontSize: 13),
                               border: InputBorder.none,
+                              prefixIcon: Icon(Icons.search, color: Colors.white54, size: 20),
                               contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 15),
                             ),
                           ),
@@ -97,33 +189,53 @@ class AdminPastPapersScreen extends StatelessWidget {
                         // Filter Pills
                         Row(
                           children: [
-                            _buildFilterPill('All', true),
+                            GestureDetector(
+                               onTap: () => setState(() => _selectedFilter = 'All'),
+                               child: _buildFilterPill('All', _selectedFilter == 'All'),
+                            ),
                             const SizedBox(width: 12),
-                            _buildFilterPill('Grade', false),
-                            const SizedBox(width: 12),
-                            _buildFilterPill('Subject', false),
+                            GestureDetector(
+                               onTap: () => setState(() => _selectedFilter = 'Grade'),
+                               child: _buildFilterPill('Grade', _selectedFilter == 'Grade'),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 24),
 
-                        // Paper Items list
-                        _buildPaperItem(
-                          'ICT 2023 Term Test',
-                          'Grade 13 • Paper • PDF',
-                          'Uploaded 2 days ago',
-                        ),
-                        const SizedBox(height: 12),
-                        _buildPaperItem(
-                          'Maths 2022 Model Paper',
-                          'Grade 12 • Paper • PDF',
-                          'Uploaded 5 days ago',
-                        ),
-                        const SizedBox(height: 12),
-                        _buildPaperItem(
-                          'Science 2021 Final Exam',
-                          'Grade 11 • Paper • PDF',
-                          'Uploaded 1 week ago',
-                        ),
+                        // Paper Items list dynamically populated
+                        if (_isLoading)
+                          const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(32.0),
+                              child: CircularProgressIndicator(color: Color(0xFF4AC4F3)),
+                            ),
+                          )
+                        else if (_filteredPapers.isEmpty)
+                          const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(32.0),
+                              child: Text(
+                                'No papers found.',
+                                style: TextStyle(color: Colors.white54, fontSize: 14),
+                              ),
+                            ),
+                          )
+                        else
+                          ..._filteredPapers.map((paper) {
+                            final title = paper['title'] ?? 'Unknown Title';
+                            final grade = paper['grade'] ?? 'Unknown Grade';
+                            final type = paper['paper_type'] ?? 'Paper';
+                            final dateStr = _formatDate(paper['created_at']);
+                            
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 12.0),
+                              child: _buildPaperItem(
+                                title,
+                                'Grade $grade • $type',
+                                'Uploaded $dateStr',
+                              ),
+                            );
+                          }).toList(),
 
                         const SizedBox(height: 24),
 
@@ -133,14 +245,24 @@ class AdminPastPapersScreen extends StatelessWidget {
                           height: 56,
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
-                              colors: [Color(0xFF4AC4F3), Color(0xFFB55DFF)],
+                              colors: [Color(0xFF4AC4F3), Color(0xFFB55DFF)], // Cyan to Purple
                               begin: Alignment.centerLeft,
                               end: Alignment.centerRight,
                             ),
                             borderRadius: BorderRadius.circular(16),
                           ),
                           child: ElevatedButton(
-                            onPressed: () {},
+                            onPressed: () async {
+                              // Navigate to Upload screen and wait for return
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const AdminMcqUploadScreen(),
+                                ),
+                              );
+                              // Refresh papers after returning from upload screen
+                              _fetchPapers();
+                            },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.transparent,
                               shadowColor: Colors.transparent,
@@ -167,7 +289,7 @@ class AdminPastPapersScreen extends StatelessWidget {
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 16,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -175,16 +297,28 @@ class AdminPastPapersScreen extends StatelessWidget {
                           width: double.infinity,
                           padding: const EdgeInsets.all(20),
                           decoration: BoxDecoration(
-                            color: Colors.transparent,
+                            color: const Color(0xFF1A1C36),
                             borderRadius: BorderRadius.circular(16),
                             border: Border.all(color: Colors.white12),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
-                            children: const [
-                              Text('Total Papers: 542', style: TextStyle(color: Colors.white70, fontSize: 14)),
-                              SizedBox(height: 12),
-                              Text('Recently Added: 18', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('Total Papers', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                                  Text('$totalPapers', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('Recently Added (7 days)', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                                  Text('$recentPapers', style: const TextStyle(color: Color(0xFF4AC4F3), fontSize: 16, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
                             ],
                           ),
                         ),
@@ -195,7 +329,7 @@ class AdminPastPapersScreen extends StatelessWidget {
                 ),
               ),
 
-              // Bottom Navigation Bar lookalike (as shown in design)
+              // Bottom Navigation Bar
               Container(
                 color: const Color(0xFF131427),
                 child: SafeArea(
@@ -204,17 +338,18 @@ class AdminPastPapersScreen extends StatelessWidget {
                     height: 60,
                     margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                     decoration: BoxDecoration(
-                      color: Colors.transparent,
+                      color: const Color(0xFF1A1C36),
                       borderRadius: BorderRadius.circular(30),
                       border: Border.all(color: Colors.white12),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        _buildNavItem('Dashboard', false),
-                        _buildNavItem('Users', false),
-                        _buildNavItem('Papers', true), // Papers selected
-                        _buildNavItem('Settings', false),
+                        _buildNavItem(context, 'Dashboard', false),
+                        _buildNavItem(context, 'Users', false),
+                        _buildNavItem(context, 'Notes', false),
+                        _buildNavItem(context, 'Papers', true), // Papers selected
+                        _buildNavItem(context, 'Settings', false),
                       ],
                     ),
                   ),
@@ -233,7 +368,7 @@ class AdminPastPapersScreen extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: isSelected
             ? const LinearGradient(
-                colors: [Color(0xFF4AC4F3), Color(0xFFB55DFF)], // Cyan to Outline
+                colors: [Color(0xFF4AC4F3), Color(0xFFB55DFF)], // Cyan to Purple
                 begin: Alignment.centerLeft,
                 end: Alignment.centerRight,
               )
@@ -294,46 +429,39 @@ class AdminPastPapersScreen extends StatelessWidget {
               ],
             ),
           ),
-          Column(
-            children: [
-              _buildSmallButton('View'),
-              const SizedBox(height: 8),
-              _buildSmallButton('Edit'),
-            ],
-          ),
+          // We removed the static View/Edit buttons here to make the item cleaner,
+          // or we can keep a simple icon if we want.
+          const Icon(Icons.picture_as_pdf, color: Colors.white38, size: 28),
         ],
       ),
     );
   }
 
-  Widget _buildSmallButton(String label) {
-    return Container(
-      width: 60,
-      height: 30,
-      decoration: BoxDecoration(
-        color: const Color(0xFF222544),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Center(
+  Widget _buildNavItem(BuildContext context, String label, bool isSelected) {
+    return GestureDetector(
+      onTap: () {
+        if (isSelected) return;
+        if (label == 'Dashboard') {
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen()));
+        } else if (label == 'Users') {
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AdminUsersScreen()));
+        } else if (label == 'Notes') {
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AdminNotesScreen()));
+        } else if (label == 'Papers') {
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AdminPastPapersScreen()));
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        color: Colors.transparent, // expand tap area
         child: Text(
           label,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 12,
+          style: TextStyle(
+            color: isSelected ? const Color(0xFF4AC4F3) : Colors.white54,
+            fontSize: 13,
+            fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildNavItem(String label, bool isSelected) {
-    return Text(
-      label,
-      style: TextStyle(
-        color: isSelected ? const Color(0xFF4AC4F3) : Colors.white54,
-        fontSize: 13,
-        fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
       ),
     );
   }
